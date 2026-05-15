@@ -2,13 +2,15 @@
  * Cache-first for static assets so the app works fully offline.
  * Bump CACHE_VERSION whenever you update files to force refresh.
  */
-const CACHE_VERSION = 'pea-bill-v1.1.0';
-const ASSETS = [
+const CACHE_VERSION = 'pea-bill-v1.2.0';
+const CRITICAL_ASSETS = [
   './',
   './index.html',
   './app.js',
   './manifest.json',
-  './items.json',
+  './items.json'
+];
+const OPTIONAL_ASSETS = [
   './icons/icon-72.png',
   './icons/icon-96.png',
   './icons/icon-128.png',
@@ -23,9 +25,19 @@ const ASSETS = [
 ];
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE_VERSION).then((cache) => cache.addAll(ASSETS)).then(() => self.skipWaiting())
-  );
+  event.waitUntil((async () => {
+    const cache = await caches.open(CACHE_VERSION);
+    // Critical assets must succeed
+    await cache.addAll(CRITICAL_ASSETS);
+    // Optional assets — best effort, ignore failures (e.g., missing icons)
+    await Promise.all(OPTIONAL_ASSETS.map(async (url) => {
+      try {
+        const res = await fetch(url);
+        if (res.ok) await cache.put(url, res);
+      } catch (e) { /* ignore */ }
+    }));
+    self.skipWaiting();
+  })());
 });
 
 self.addEventListener('activate', (event) => {
