@@ -549,13 +549,71 @@ async function syncAllUnsyncedBills() {
   const url = localStorage.getItem(STORAGE_KEYS.SCRIPT_URL);
   if (!url) { showToast('ยังไม่ได้ตั้งค่า Apps Script URL'); return; }
   const unsynced = state.history.filter(b => !b.synced);
-  if (unsynced.length === 0) { showToast('ทุกรายการ sync แล้ว'); return; }
+  if (unsynced.length === 0) {
+    showToast('Push เสร็จ — กำลังดึงประวัติจากคลาวด์...');
+    const pulled = await pullHistoryFromSheet();
+    showToast(`ดึงประวัติจากคลาวด์: เพิ่ม ${pulled} ใบบริการใหม่`);
+    return;
+  }
   showToast(`กำลัง sync ${unsynced.length} รายการ...`);
   let ok = 0;
   for (const b of unsynced) {
     try { await syncBillToSheet(b); if (b.synced) ok++; } catch {}
   }
-  showToast(`Sync สำเร็จ ${ok}/${unsynced.length} รายการ`);
+  // After push, also pull to merge bills from other devices
+  const pulled = await pullHistoryFromSheet();
+  showToast(`✓ Push ${ok}/${unsynced.length} • ดึงใหม่ ${pulled} รายการ`);
+}
+
+async function pullHistoryFromSheet() {
+  const url = localStorage.getItem(STORAGE_KEYS.SCRIPT_URL);
+  const apiKey = localStorage.getItem(STORAGE_KEYS.API_KEY) || '';
+  if (!url) return 0;
+  try {
+    const res = await fetch(url + '?action=getHistory&apiKey=' + encodeURIComponent(apiKey) + '&limit=200');
+    const data = await res.json();
+    if (!data.ok || !Array.isArray(data.bills)) return 0;
+
+    const existingIds = new Set(state.history.map(b => b.id));
+    let added = 0;
+    for (const remoteBill of data.bills) {
+      if (!remoteBill.id || existingIds.has(remoteBill.id)) continue;
+      // Convert Sheet row format -> app format
+      const items = (remoteBill.items || []).map(it => ({
+        code: String(it.code || ''),
+        name: String(it.name || ''),
+        unit: String(it.unit || ''),
+        qty: parseFloat(it.qty) || 0,
+        user_price: parseFloat(it.user_price) || 0,
+        pre_tax: parseFloat(it.pre_tax_each) || 0,
+        category: String(it.category || '')
+      }));
+      state.history.push({
+        id: remoteBill.id,
+        created_at: remoteBill.created_at instanceof Date
+          ? remoteBill.created_at.toISOString()
+          : String(remoteBill.created_at || new Date().toISOString()),
+        customer: String(remoteBill.customer || ''),
+        location: String(remoteBill.location || ''),
+        note: String(remoteBill.note || ''),
+        items,
+        total: parseFloat(remoteBill.total) || 0,
+        synced: true,
+        from_cloud: true
+      });
+      added++;
+    }
+    if (added > 0) {
+      // Sort by created_at ascending so the latest stays at the bottom (newest first when reversed in renderHistory)
+      state.history.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+      saveHistory();
+      renderHistory();
+    }
+    return added;
+  } catch (e) {
+    console.warn('pull history failed', e);
+    return 0;
+  }
 }
 
 async function testConnection() {
@@ -637,6 +695,13 @@ async function init() {
   loadCart();
   loadHistory();
   await loadItems();
+
+  // Auto-pull history from Sheet on startup (if Apps Script is configured)
+  if (localStorage.getItem(STORAGE_KEYS.SCRIPT_URL)) {
+    pullHistoryFromSheet().then(n => {
+      if (n > 0) showToast(`📥 ดึงประวัติจากคลาวด์: ${n} ใบบริการใหม่`, 2500);
+    });
+  }
 
   // Wire up search
   $('#searchInput').addEventListener('input', (e) => {

@@ -2,7 +2,7 @@
  * Cache-first for static assets so the app works fully offline.
  * Bump CACHE_VERSION whenever you update files to force refresh.
  */
-const CACHE_VERSION = 'pea-bill-v1.2.0';
+const CACHE_VERSION = 'pea-bill-v1.3.0';
 const CRITICAL_ASSETS = [
   './',
   './index.html',
