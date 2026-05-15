@@ -4,13 +4,15 @@
  * ============================================================ */
 
 const STORAGE_KEYS = {
-  CART:        'pea_cart_v1',
-  HISTORY:     'pea_history_v1',
-  SCRIPT_URL:  'pea_script_url',
-  API_KEY:     'pea_api_key',
-  MULTIPLIER:  'pea_multiplier',
-  ITEMS_CACHE: 'pea_items_cache_v1',
-  LAST_FILTER: 'pea_last_filter'
+  CART:           'pea_cart_v1',
+  HISTORY:        'pea_history_v1',
+  SCRIPT_URL:     'pea_script_url',
+  API_KEY:        'pea_api_key',
+  MULTIPLIER:     'pea_multiplier',
+  ITEMS_CACHE:    'pea_items_cache_v1',
+  LAST_FILTER:    'pea_last_filter',
+  ITEMS_SOURCE:   'pea_items_source',     // 'sheet' | 'local'
+  ITEMS_FETCHED:  'pea_items_fetched_at'  // timestamp
 };
 
 const state = {
@@ -51,7 +53,7 @@ window.closeModal = closeModal; // expose for inline handlers
  * Data loading
  * ============================================================ */
 async function loadItems() {
-  // Try cache first (works offline + faster startup)
+  // 1) Show cached data immediately (works offline + faster startup)
   const cached = localStorage.getItem(STORAGE_KEYS.ITEMS_CACHE);
   if (cached) {
     try {
@@ -61,23 +63,79 @@ async function loadItems() {
     } catch (e) { console.warn('Cache parse failed', e); }
   }
 
-  // Then fetch fresh copy
-  try {
-    const res = await fetch('items.json', { cache: 'no-cache' });
-    if (res.ok) {
-      const data = await res.json();
-      state.items = data;
-      localStorage.setItem(STORAGE_KEYS.ITEMS_CACHE, JSON.stringify(data));
-      applyMultiplierToItems();
-      console.log('Loaded', data.length, 'items from network');
+  // 2) Then fetch a fresh copy from configured source
+  const source = localStorage.getItem(STORAGE_KEYS.ITEMS_SOURCE) || 'local';
+  let fresh = null;
+
+  if (source === 'sheet') {
+    fresh = await fetchItemsFromSheet();
+    if (!fresh) {
+      console.warn('Sheet fetch failed, falling back to local items.json');
+      fresh = await fetchItemsFromLocal();
     }
-  } catch (e) {
-    console.warn('Network fetch failed; using cache', e);
+  } else {
+    fresh = await fetchItemsFromLocal();
+  }
+
+  if (fresh && fresh.length > 0) {
+    state.items = fresh;
+    localStorage.setItem(STORAGE_KEYS.ITEMS_CACHE, JSON.stringify(fresh));
+    localStorage.setItem(STORAGE_KEYS.ITEMS_FETCHED, new Date().toISOString());
+    applyMultiplierToItems();
   }
 
   buildFilterChips();
   renderItems();
   updateDataInfo();
+}
+
+async function fetchItemsFromLocal() {
+  try {
+    const res = await fetch('items.json', { cache: 'no-cache' });
+    if (!res.ok) return null;
+    const data = await res.json();
+    console.log('Loaded', data.length, 'items from local items.json');
+    return data;
+  } catch (e) {
+    console.warn('Local fetch failed', e);
+    return null;
+  }
+}
+
+async function fetchItemsFromSheet() {
+  const url = localStorage.getItem(STORAGE_KEYS.SCRIPT_URL);
+  const apiKey = localStorage.getItem(STORAGE_KEYS.API_KEY) || '';
+  if (!url) return null;
+  try {
+    const res = await fetch(url + '?action=getItems&apiKey=' + encodeURIComponent(apiKey));
+    const data = await res.json();
+    if (!data.ok) {
+      console.warn('Sheet getItems rejected:', data.error);
+      return null;
+    }
+    // Normalize Sheet rows -> standard item objects
+    const items = (data.items || []).map(r => ({
+      code:       String(r.code || ''),
+      name:       String(r.name || ''),
+      unit:       String(r.unit || ''),
+      category:   String(r.category || ''),
+      std_price:  toNum(r.std_price),
+      user_price: toNum(r.user_price),
+      pre_tax:    toNum(r.pre_tax),
+      frequent:   String(r.frequent || '').toUpperCase() === 'Y'
+    })).filter(it => it.code && it.name);
+    console.log('Loaded', items.length, 'items from Google Sheets');
+    return items;
+  } catch (e) {
+    console.warn('Sheet fetch error', e);
+    return null;
+  }
+}
+
+function toNum(v) {
+  if (v === null || v === undefined || v === '') return null;
+  const n = parseFloat(String(v).replace(/,/g, ''));
+  return isNaN(n) ? null : n;
 }
 
 function applyMultiplierToItems() {
@@ -527,8 +585,16 @@ function openSettings() {
 }
 
 function updateDataInfo() {
-  $('#dataInfo').textContent =
-    `รายการอุปกรณ์: ${state.items.length} • ประวัติ: ${state.history.length} ใบบริการ • ยังไม่ sync: ${state.history.filter(b => !b.synced).length}`;
+  const source = localStorage.getItem(STORAGE_KEYS.ITEMS_SOURCE) || 'local';
+  const fetched = localStorage.getItem(STORAGE_KEYS.ITEMS_FETCHED);
+  const fetchedTxt = fetched ? new Date(fetched).toLocaleString('th-TH') : 'ยังไม่เคย';
+  const sourceTxt = source === 'sheet' ? '☁ Google Sheets' : '📦 ไฟล์ในแอป (items.json)';
+  $('#dataInfo').innerHTML =
+    `รายการอุปกรณ์: <b>${state.items.length}</b> • ประวัติ: ${state.history.length} ใบบริการ • ยังไม่ sync: ${state.history.filter(b => !b.synced).length}` +
+    `<br>แหล่งราคา: <b>${sourceTxt}</b> • อัปเดตล่าสุด: ${fetchedTxt}`;
+  // Reflect source radio in UI
+  const r = document.querySelector('input[name="itemsSource"][value="' + source + '"]');
+  if (r) r.checked = true;
 }
 
 function saveSettings() {
@@ -604,10 +670,23 @@ async function init() {
   $('#btnSaveSettings').onclick = saveSettings;
   $('#btnTestConnection').onclick = testConnection;
   $('#btnSaveMultiplier').onclick = saveMultiplier;
-  $('#btnReloadData').onclick = () => {
+  $('#btnReloadData').onclick = async () => {
     localStorage.removeItem(STORAGE_KEYS.ITEMS_CACHE);
-    loadItems().then(() => showToast('โหลดราคาใหม่แล้ว'));
+    showToast('กำลังโหลด...');
+    await loadItems();
+    showToast('โหลดราคาใหม่แล้ว: ' + state.items.length + ' รายการ', 2500);
   };
+
+  // Items source radio buttons
+  document.querySelectorAll('input[name="itemsSource"]').forEach(r => {
+    r.addEventListener('change', async () => {
+      localStorage.setItem(STORAGE_KEYS.ITEMS_SOURCE, r.value);
+      localStorage.removeItem(STORAGE_KEYS.ITEMS_CACHE);
+      showToast('เปลี่ยนแหล่งข้อมูลเป็น ' + (r.value === 'sheet' ? 'Google Sheets' : 'ไฟล์ในแอป'));
+      await loadItems();
+      updateDataInfo();
+    });
+  });
   $('#btnClearHistory').onclick = () => {
     if (confirm('ล้างประวัติทั้งหมด? (ไม่สามารถย้อนกลับได้)')) {
       state.history = []; saveHistory(); renderHistory(); showToast('ล้างแล้ว');

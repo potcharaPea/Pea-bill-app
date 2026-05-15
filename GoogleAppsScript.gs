@@ -174,8 +174,9 @@ function saveBill(bill) {
   const sBills = ss.getSheetByName(CONFIG.SHEET_NAME_BILLS);
   const sLines = ss.getSheetByName(CONFIG.SHEET_NAME_BILL_ITEMS);
 
-  // Avoid duplicates: if id already exists, skip header insert (still re-insert lines? — be conservative: skip entirely)
-  const ids = sBills.getRange(2, 1, Math.max(0, sBills.getLastRow() - 1), 1).getValues().flat();
+  // Avoid duplicates: if id already exists, skip (be conservative: skip entirely)
+  const lastRow = sBills.getLastRow();
+  const ids = lastRow > 1 ? sBills.getRange(2, 1, lastRow - 1, 1).getValues().flat() : [];
   if (ids.includes(bill.id)) return bill.id;
 
   const createdAt = bill.created_at || new Date().toISOString();
@@ -255,20 +256,54 @@ function setup() {
 }
 
 /**
- * Import รายการอุปกรณ์จาก JSON (วาง JSON ลงในตัวแปร data ก่อนรัน)
- * วิธีใช้: ดับเบิลคลิกฟังก์ชันนี้ใน editor → Run
+ * วิธีง่ายสุด: นำเข้าข้อมูลอุปกรณ์ทั้ง 727 รายการจาก URL ของ items.json บน GitHub Pages
+ * วิธีใช้:
+ *   1) เปลี่ยนค่า ITEMS_URL ด้านล่างให้ตรงกับเว็บของคุณ (ลงท้ายด้วย /items.json)
+ *   2) ในแถบบน เลือกฟังก์ชัน "importItemsFromUrl" → กด Run
+ *   3) ดู Log จะบอกว่า import กี่รายการ
+ *   4) เปิด Spreadsheet → แท็บ Items → จะเห็นข้อมูลครบ
+ */
+function importItemsFromUrl() {
+  const ITEMS_URL = 'https://potcharapea.github.io/Pea-bill-app/items.json';  // ← แก้ตรงนี้ถ้า URL ต่างไป
+
+  const res = UrlFetchApp.fetch(ITEMS_URL, { muteHttpExceptions: true });
+  if (res.getResponseCode() !== 200) {
+    throw new Error('ดาวน์โหลดไม่ได้: HTTP ' + res.getResponseCode() + ' จาก ' + ITEMS_URL);
+  }
+  const items = JSON.parse(res.getContentText());
+  return _writeItemsToSheet(items);
+}
+
+/**
+ * Import รายการอุปกรณ์จาก JSON ที่วางในตัวแปร (สำหรับ JSON เล็ก ๆ)
  */
 function importItemsFromJson() {
-  const jsonText = '[]'; // ← วาง JSON จากไฟล์ items.json ลงตรงนี้ (ครอบด้วย ' )
+  const jsonText = '[]'; // ← วาง JSON ตรงนี้ ครอบด้วย ' '
   const items = JSON.parse(jsonText);
+  return _writeItemsToSheet(items);
+}
+
+function _writeItemsToSheet(items) {
   const s = sheet(CONFIG.SHEET_NAME_ITEMS);
-  s.getRange(2, 1, Math.max(0, s.getLastRow() - 1), 8).clearContent();
+  // Clear old data (keep header)
+  if (s.getLastRow() > 1) {
+    s.getRange(2, 1, s.getLastRow() - 1, 8).clearContent();
+  }
   const rows = items.map(it => [
-    it.code, it.name, it.unit, it.category,
-    it.std_price, it.user_price, it.pre_tax, it.frequent ? 'Y' : ''
+    it.code || '',
+    it.name || '',
+    it.unit || '',
+    it.category || '',
+    it.std_price !== undefined ? it.std_price : '',
+    it.user_price !== undefined ? it.user_price : '',
+    it.pre_tax !== undefined ? it.pre_tax : '',
+    it.frequent ? 'Y' : ''
   ]);
   if (rows.length > 0) {
     s.getRange(2, 1, rows.length, rows[0].length).setValues(rows);
+    // Auto-resize columns
+    s.autoResizeColumns(1, 8);
   }
-  Logger.log('Imported ' + rows.length + ' items');
+  Logger.log('นำเข้าสำเร็จ ' + rows.length + ' รายการ');
+  return rows.length;
 }

@@ -349,6 +349,27 @@
     </div>
 
     <div class="settings-section">
+      <h3>แหล่งข้อมูลราคาอุปกรณ์</h3>
+      <p>เลือกว่าจะให้แอปโหลดราคาจากที่ใด</p>
+      <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px;">
+        <label style="display: flex; gap: 8px; align-items: flex-start; cursor: pointer; padding: 8px; border: 1px solid #d6e0d8; border-radius: 8px;">
+          <input type="radio" name="itemsSource" value="local" style="margin-top: 4px;" checked />
+          <div>
+            <div style="font-weight: 600;">📦 ไฟล์ในแอป (items.json)</div>
+            <div style="font-size: 11px; color: var(--muted);">ใช้ข้อมูลที่มากับแอป โหลดเร็ว ใช้งานออฟไลน์ได้ เหมาะกับการเริ่มต้น</div>
+          </div>
+        </label>
+        <label style="display: flex; gap: 8px; align-items: flex-start; cursor: pointer; padding: 8px; border: 1px solid #d6e0d8; border-radius: 8px;">
+          <input type="radio" name="itemsSource" value="sheet" style="margin-top: 4px;" />
+          <div>
+            <div style="font-weight: 600;">☁ Google Sheets (อัปเดตได้ตลอด)</div>
+            <div style="font-size: 11px; color: var(--muted);">ดึงราคาจาก Google Sheets ที่เชื่อมไว้ ทุกครั้งที่แก้ไขใน Sheets แอปจะดึงราคาใหม่ได้ทันที (ต้องตั้ง Apps Script URL ก่อน)</div>
+          </div>
+        </label>
+      </div>
+    </div>
+
+    <div class="settings-section">
       <h3>ข้อมูล</h3>
       <p id="dataInfo">รายการอุปกรณ์: -</p>
       <div class="cart-actions">
